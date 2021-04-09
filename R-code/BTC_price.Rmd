@@ -1,0 +1,474 @@
+---
+title: "Forecast BTC price"
+author: "Ignacio"
+date: "10/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+## install packages
+
+#install.packages("MASS")
+#install.packages('forecast', dependencies = TRUE)
+#install.packages("tidyverse")
+#update.packages("MASS")
+#install.packages("RColorBrewer")
+#install.packages("gridExtra")
+#install.packages("cowplot")
+#install.packages("tidyverse")
+#install.packages("GGally")
+#library(Matrix)
+##install.packages('latex2exp')  ## install LateX for plots
+library(latex2exp)
+library(gridExtra)
+library(cowplot)
+#library(viridis)
+library(RColorBrewer)
+library(tidyverse)
+#library(forecast)
+library(MASS)
+
+```
+
+
+
+```{r}
+## Load dataset
+d <- read.csv("Xday_merged.csv")
+daux <- as.Date(d$Date)
+d$Date <- daux
+head(d)
+```
+
+```{r}
+## quick plot
+
+fig00 <- ggplot(data=d)+
+  geom_line(aes(x=Date, y=BTC_Close))
+
+fig00
+```
+
+```{r}
+## Load Master Dataset
+btc <- read.csv("BTC.csv")
+btc$Date <- as.Date(btc$Date)
+head(btc)
+```
+
+
+```{r}
+## dimensions of the datasets
+dim(d)
+dim(btc)
+
+```
+
+
+
+```{r}
+## define color palette for future plots
+cpalette1 <- c("#CC6666", "#9999CC", "orange", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+```
+
+```{r}
+## Build models
+## log variables
+lnClose <- log10(btc$Close)
+lnS2F <- log10(btc$S2F)
+
+df <- data.frame(lnClose, lnS2F, btc$SP500)
+
+## polynomial models for S2F
+m01 <- lm(data=df, formula=lnClose~I(lnS2F^1))
+m02 <- lm(data=df, formula=lnClose~I(lnS2F^2))
+m03 <- lm(data=df, formula=lnClose~I(lnS2F^3))
+m04 <- lm(data=df, formula=lnClose~I(lnS2F^4))
+
+summary(m01)
+summary(m02)
+summary(m03)
+summary(m04)
+
+```
+```{r}
+## 
+names(m01)
+dim(btc)
+length(m01$residuals)
+```
+
+
+```{r}
+## In this chunk we plot the curves for Bitcoin stock and supply
+BTCs2f <- read.csv("BTCs2f.csv")
+BTCs2f$Date <- as.Date(BTCs2f$Date)
+
+## check scale
+aux001 <- max(BTCs2f$BTC_stock); aux002 <- min(BTCs2f$BTC_stock)
+aux003 <- max(log10(BTCs2f$BTC_flow)); aux004 <- min(log10(BTCs2f$BTC_flow))
+a0 <- 2051048.39736512
+b0 <- 13208261.98800764
+aux_y <- a0*log10(BTCs2f$BTC_flow)+b0
+
+## plot
+#png("Fig-mined.png", height=600, width=1200)
+fig05 <- ggplot(data=BTCs2f, aes(x=Date))+
+  geom_line(aes(y=(BTC_stock), colour="BTC stock"), size=1)+
+  #scale_y_continuous(sec.axis=sec_axis(~.*0.5e-4))+
+  geom_line(aes(y=aux_y-0.5e7, colour="BTC mined"), size=1)+
+  scale_colour_manual("", breaks=c("BTC stock", "BTC mined"), values=c(cpalette1[3], cpalette1[1]))+
+  geom_vline(xintercept=as.Date("2021-02-01"), color="purple", linetype="dashed", size=0.5)
+
+fig05
+#fig05+theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+
+```
+```{r}
+## print header for BTCS2F
+head(BTCs2f)
+```
+
+```{r}
+## In this chunk, we plot the results for different fitted models fotr the S2F model
+
+## to make the plot easier, function to call the fit coefficients
+beta_ <- function(lm){
+  Bi <- lm$coefficients
+  return(Bi)
+}
+
+## S2F
+
+
+## plot
+#png("Fig-S2F-poly  .png", height=600,width=1200)
+
+fig03 <- ggplot(data=btc)+
+  geom_line(aes(x=Date, y=Close, colour="Bitcoin"), size=1)+
+  geom_line(aes(x=Date, y=beta_(m01)[1]+beta_(m01)[2]*S2F^1, colour="p=1"), size=1)+
+  geom_line(aes(x=Date, y=beta_(m02)[1]+beta_(m02)[2]*S2F^2, colour="p=2"), size=1)+
+  geom_line(aes(x=Date, y=beta_(m03)[1]+beta_(m03)[2]*S2F^3, colour="p=3"), size=1)+
+  geom_line(aes(x=Date, y=beta_(m04)[1]+beta_(m04)[2]*S2F^4, colour="p=4"), size=1)+
+  scale_y_continuous(trans="log10")+
+  scale_colour_manual("", breaks=c("Bitcoin", "p=1","p=2","p=3", "p=4"), values=c("steelblue", cpalette1[1:4]))+
+  labs(y="USD")+
+  ggtitle(TeX(r"($x($S2F$)=\beta_0 + \beta_1 \cdot \log($S2F$)^p$)"))
+
+fig03
+
+#fig03 + theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+
+
+## add the fitted S2F to the dataset
+btc$logS2F_fit <- log10(beta_(m03)[1]+beta_(m03)[2]*(btc$S2F)^3)
+names(btc)
+
+
+```
+
+
+
+
+```{r}
+## R2 for the S2F fits
+evalFit <- function(x, x2){
+  RS_ <- na.remove(x - x2)    ## sum of residuals
+  RSS_ <- sum(RS_^2)                      ## sum of squared residuals
+  TSS_ <- sum((na.remove(x) - mean(na.remove(x)))^2)  ## total sum of squares
+  RSE_ <- sqrt(RSS_/(length(x)-2))      ## residual standard error
+  R2_ <- 1 - (RSS_/TSS_) ## R2 statistic
+  MSE_ <- RSS_/length(na.remove(x))
+  return(c(R2_, MSE_))
+}
+
+## dataframe for R2 values
+evalm01 <- evalFit(btc$logClose, log10(beta_(m01)[1]+beta_(m01)[2]*btc$S2F^1))
+evalm02 <- evalFit(btc$logClose, log10(beta_(m02)[1]+beta_(m02)[2]*btc$S2F^2))
+evalm03 <- evalFit(btc$logClose, log10(beta_(m03)[1]+beta_(m03)[2]*btc$S2F^3))
+evalm04 <- evalFit(btc$logClose, log10(beta_(m04)[1]+beta_(m04)[2]*btc$S2F^4))
+
+try00 <- data.frame("logClose"=na.remove(btc$logClose), "p1"=evalm01[1], "p2"=evalm02[1], "p3"=evalm03[1], "p4"=evalm04)
+
+## columns
+model <- c("p1", "p2", "p3", "p4")
+R2__ <- c(evalm01[1], evalm02[1], evalm03[1], evalm04[1])
+MSE__ <- c(evalm01[2], evalm02[2], evalm03[2], evalm04[2])
+table_R2 <- data.frame(model, R2__, MSE__)
+table_R2 
+
+```
+
+```{r}
+## columns
+length((btc$Close))
+```
+
+
+```{r}
+## columns
+model <- c("p1", "p2", "p3", "p4")
+R2__ <- c(evalFit(try00$logClose, try00$p1), evalFit(try00$logClose, try00$p2), evalFit(try00$logClose, try00$p3), evalFit(try00$logClose, try00$p4))
+table_R2 <- data.frame(model, R2__)
+table_R2 
+```
+
+
+```{r}
+## Bitcoin and other markets
+fig04 <- ggplot(data=btc)+
+  geom_line(aes(x=Date, y=Close), color="steelblue")+
+  geom_line(aes(x=Date, y=SP500), color="purple")+
+  labs(y="USD")+
+  scale_y_continuous(trans="log10")+
+  geom_line(data=d, aes(x=Date, y=tesla_close), color="red")+
+  geom_line(data=d, aes(x=Date, y=gold_close), color="black")+
+  geom_line(data=d, aes(x=Date, y=lite_close), color="grey")
+
+fig05 <- ggplot(data=btc)+
+  geom_line(aes(x=Date, y=Close), color="steelblue")+
+  scale_y_continuous(trans="log10")
+
+fig04
+fig05
+```
+```{r}
+## header for other markets
+head(btc)
+```
+
+# Time series for ARCH & GARCH
+```{r}
+## import libraries to perform ARCH & GARCH
+#install.packages("FinTS")
+#install.packages("rugarch")
+#install.packages("tseries")
+#install.packages("dynlm")
+#install.packages("vars")
+#install.packages("car")
+#install.packages("forecast")
+
+library(FinTS)          ## For ARCH models
+library(rugarch)        ## For GARCH models
+library(tseries)        ## For unit root test
+library(dynlm)          ## For using lags in the model
+library(vars)           ## For using var
+#library(nlWaldTest)    ## For testing the non-linear Wald test
+library(car)            ## For robust standard errors
+library(forecast)
+```
+
+
+```{r}
+#help(diff)
+
+## convert to time series
+btc$dClose <- c(NA, diff(btc$Close))
+TS <- ts(btc[, c("Close","dClose")], start=c(2012, 01), frequency=360)
+
+## plot
+#png("Fig-ts.png", height = 600, width = 1200)
+plot(TS)
+#dev.off()
+
+hist(TS[,1], freq=FALSE)
+hist(TS[,2], freq=FALSE)
+
+## Shapiro test
+shapiro.test(TS)
+```
+We can see non-Gaussian distribution for the histograms. This is further verified using the Shapiro-Wilk test
+
+We can see from the Shapiro normality test that the Bitcoin price is indeed not normally distributed. So the null hypothesis that the data follows a normal distribution is rejected and therefore we accept the alternative hypothesis that the time series follows a non-Gaussian distribution.
+
+
+```{r}
+## convert to log
+btc$logClose <- log10(btc$Close)
+btc$logdClose <- c(NA, diff(log10(btc$logClose)))
+
+logTS <- na.remove(ts(btc[,c("logClose", "logdClose")], start=c(2012, 01), frequency=360))
+
+## 
+plot(logTS)
+
+help(hist)
+
+hist(logTS[,1], freq=FALSE, main="logClose")
+hist(logTS[,2], freq=FALSE, main="logVelocity")
+
+## Shapiro to the log prices
+shapiro.test(logTS[,1])
+
+
+```
+
+```{r}
+## Apply autocorrelation Function to the linear-scale data
+
+## mean halving frequency
+mhalv <- 1383 ## this is the average time difference in days between halvings
+
+#png("Fig-ACF-pi.png", height=600, width=1200)
+  
+fig10 <- ggAcf(
+  na.remove(btc$dClose),
+  lag.max = 1200,
+  type = c("correlation"),
+  plot = TRUE,
+  na.action = na.contiguous,
+  demean = TRUE) +
+  ggtitle("Autocorrelation-Function")+
+  labs(x=TeX(r"(Lag ($\tau$))"))
+
+fig10
+
+#fig10 + theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+
+
+## plot PI-cycle
+#png("Fig-pi-cycle.png", height=600, width=1200)
+fig02 <- ggplot(data=btc)+
+  geom_ribbon(aes(x=Date, ymin=Short_Pi, ymax=Long_Pi, colour="Pi-cycle"), fill="grey85")+
+  geom_line(aes(x=Date, y=Close, colour="Bitcoin"), size=1)+
+  geom_line(aes(x=Date, y=Long_Pi), color="#00AFBB", size=1)+
+  geom_line(aes(x=Date, y=Short_Pi), color="#FC4E07", size=1)+
+  scale_y_continuous(trans="log10")+
+  labs(y="USD")+
+  scale_colour_manual("", breaks=c("Bitcoin", "Pi-cycle"), values=c("steelblue", "#CC79A7"))+
+  ggtitle(TeX(r"($\pi$-cycle)"))
+  
+
+fig02
+#fig02 + theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+
+```
+
+
+```{r}
+## residulas and non-heteroscedasticity compared to S2F
+re <- btc$logClose - btc$logS2F_fit
+btc$re <- re
+rss <- sum(re*re)
+
+#png("Fig-residuals.png", height=600, width=1200)
+fig08 <- ggplot(data=btc)+
+  geom_point(aes(x=Date, y=re), color=cpalette1[6])+
+  labs(y="Residuals")+
+  geom_hline(yintercept=0, color="red")
+fig08
+
+#fig08 + theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+```
+
+This confirms a non-constant variance.
+
+The estimate autoregression for a lag of 21 days is stationary then the 
+
+```{r}
+## Autocorrelation 
+
+acf.log <- acf(logTS[,2], main="ACF", lag.max=200)
+
+## P 
+pacf.log <- pacf(logTS[,2])#, main="ACF", lag.max=200)
+
+```
+
+```{r}
+## 
+```
+
+
+
+```{r}
+
+## Autocorrelation ggplot
+#png("Fig-ACF.png", height=600, width=1200)
+  
+fig07<- ggAcf(
+  na.remove(btc$dClose),
+  lag.max = 1200,
+  type = c("correlation"),
+  plot = TRUE,
+  na.action = na.contiguous,
+  demean = TRUE) +
+  ggtitle("Autocorrelation-Function")+
+  labs(x=TeX(r"(Lag ($\tau$))"))
+
+fig07
+
+#fig07 + theme(text=element_text(size=30), plot.title=element_text(hjust = 0.5)); dev.off()
+
+```
+
+
+
+```{r}
+## Auto ARIMA
+ar100 <- arima(btc$logdClose, c(1,0,0))
+ar200 <- arima(btc$logdClose, c(2,0,0))
+
+## ARMA
+arma101 <- arima(btc$logdClose, c(1,0,1))
+
+## print results
+ar100
+ar200
+arma101
+
+```
+We can see that autocorrelation is significant intercept is not
+
+
+```{r}
+## now load GARCH model
+help(ugarchfit)
+
+## simpliest GARCH
+g1s <- ugarchspec(variance.model=list(model="sGARCH", garchorder=c(1,1)), mean.model=list(armaorder=c(1,0)), distribution.model="std")
+garch11 <- ugarchfit(g1s, data=logTS[,2])
+
+garch11
+
+```
+
+```{r}
+## convert to volatility
+vole <- ts(garch11@fit$sigma^2, end=c(2021,02), frequency=360)
+
+
+## plot volatility
+png("Fig-garch11.png", height=600, width=1200)
+plot(vole, xlab="Date", ylab=TeX(r"(volatility ($\sigma^2$))"), main="GARCH(1,1)",)
+dev.off()
+```
+
+
+```{r}
+## exponential GARCH
+g1e <- ugarchspec(variance.model=list(model="eGARCH", garchorder=c(1,1)), mean.model=list(armaorder=c(1,0)), distribution.model="std",)
+garch11e <- ugarchfit(g1e, data=logTS[,2])
+
+garch11e
+```
+
+```{r}
+## convert to volatility
+vole2 <- ts(garch11e@fit$sigma^2, end=c(2021,02), frequency=360)
+
+
+## plot volatility 
+help(par)
+
+#png("Fig-GARCH.png", height=1200, width=1300)
+par(mfrow=c(3,1), cex.axis=2, cex.lab=3)
+ts.plot(TS[,1], ylab="BTC")
+ts.plot(TS[,2], ylab="returns")
+ts.plot(vole, vole2, xlab="Date", ylab=TeX(r"(volatility ($\sigma^2$))"), col=c("red", "black"))
+#dev.off()
+
+
+```
+
+
